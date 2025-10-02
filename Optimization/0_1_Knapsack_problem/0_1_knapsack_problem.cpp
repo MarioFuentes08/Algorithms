@@ -3,38 +3,42 @@
 #include<algorithm>
 
 using namespace std;
+//Prototypes
+
+int solve_knapsack(int capacity, const vector<int>& weights, const vector<int>& values);
+
+
 
 /*
 Function to solve knapsack problem
 */
-int solve_knapsack(int capacity, const vector<int>& weights, const vector<int>& values, int N){
+int solve_knapsack(int W, const vector<int>& weights, const vector<int>& values, int N){
 
-    //Dynamic programming table
-    /*
-    Creating a 2D matrix
-    Rows: n+1
-    Each row is a vector<int>
-    Columns: capacity+1 
-    Initializated with zeros
-    */
-    vector<vector<int>> dp(N+1, vector<int>(capacity + 1, 0));
+    //Base case: There is no capacity and N is 0
+    if(W == 0 || N == 0){
+        return 0;
+    }
+    
+    //Objetive function
+    //Z = Sum{i=1}^{N} value_i * x_i
 
-    //Fill table
-    for(int i = 1; i <= N; i++){
-        for(int j = 0; j <= capacity; j++){
-            //If the current object weighs more than the current capacity, we cannot include it
-            if(weights[i-1] > j){
-                dp[i][j] = dp[i-1][j];
-            }
-            else{
-                //Maximum between not including the object or including it
-                dp[i][j] = max(dp[i-1][j], values[i-1]+dp[i-1][j-weights[i-1]]);
-            }
+    //Subject to 
+    //Sum{i=1}^{N} weight_i * x_i <= W
+    //x_i in {0,1}, for all i = 1,...N
 
-        }
+    int select_element = 0;
+    //select the item if doesnt exceed the capacity
+    if(weights[N-1] <= W){
+        
+        select_element = values[N-1] + solve_knapsack(W - weights[N-1], weights, values, N-1);
     }
 
-    return dp[N][capacity];
+    //If element was not selected, then the capacity "W" is the same and go for the next element
+    int not_select = 0;
+    not_select = solve_knapsack(W, weights, values, N-1);
+
+
+    return max(select_element, not_select);
 }
 
 
@@ -42,11 +46,20 @@ int solve_knapsack(int capacity, const vector<int>& weights, const vector<int>& 
 int main(){
     
     //Data
-    vector<int> values = {60,100,120};
-    vector<int> weights = {10, 20, 30};
+    vector<int> values = {100,45,50};
+    vector<int> weights = {30, 10, 15};
     int capacity = 50;
-    int N = values.size();
 
+    int N_weights = weights.size();
+    int N_values = values.size();
+
+    //Veryfing size of weights and values. Must be not 0 and must be same
+    if(N_weights == 0 || N_values == 0 || N_weights != N_values){
+        return 0;
+    }
+
+    int result = solve_knapsack(capacity, weights, values, N_values);
+    cout << "Maximum value: " << result <<endl;
 
     return 0;
 }
