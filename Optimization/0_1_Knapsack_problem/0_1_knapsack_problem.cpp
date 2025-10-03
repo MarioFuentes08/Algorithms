@@ -5,7 +5,7 @@
 using namespace std;
 //Prototypes
 
-int solve_knapsack(int capacity, const vector<int>& weights, const vector<int>& values);
+int solve_knapsack(int W, const vector<int>& weights, const vector<int>& values, int N);
 
 
 
@@ -53,7 +53,7 @@ int main(){
     int N_weights = weights.size();
     int N_values = values.size();
 
-    //Veryfing size of weights and values. Must be not 0 and must be same
+    //Verifying size of weights and values. Must be not 0 and must be same
     if(N_weights == 0 || N_values == 0 || N_weights != N_values){
         return 0;
     }
