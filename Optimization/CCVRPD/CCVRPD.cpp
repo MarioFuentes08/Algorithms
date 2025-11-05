@@ -254,22 +254,25 @@ int main() {
         // should begin and end at the depot (node “0”) at most
         // once, respectively
         for (int v = 0; v < num_vehicles; v++) {
-            IloExpr expr1(env); // For constraint (1)
-            IloExpr expr2(env); // For constraint (2)
+            IloExpr total_starts(env); // For constraint (1)
+            IloExpr total_ends(env); // For constraint (2)
             
-            // Sum of x[v][0][j] for j=1...N (customers)
+            // Sum of x[v][0][j] for j=1...N (customers) outputs from start depot
             for (int j = 1; j <= num_customers; j++) {
-                expr1 += x[v][depot_start][j];
+                total_starts += x[v][depot_start][j];
             }
-            // Sum of x[v][i][N+1] for i=1...N (customers)
+            // Sum of x[v][i][N+1] for i=1...N (customers) inputs to end depot
             for (int i = 1; i <= num_customers; i++) {
-                expr2 += x[v][i][depot_end];
+                total_ends += x[v][i][depot_end];
             }
 
-            model.add(expr1 <= 1); // Add constraint (1)
-            model.add(expr2 <= 1); // Add constraint (2)
-            expr1.end();
-            expr2.end();
+            model.add(total_starts <= 1); 
+
+            //Number of input and outputs must be same
+            model.add(total_starts == total_ends);
+
+            total_starts.end();
+            total_ends.end();
         }
 
         //--- Prohibit start depot to end depot and vice versa ---
@@ -469,8 +472,10 @@ int main() {
         for (int v = 0; v < num_vehicles; v++) {
             // i = 0...N (depot 0 + customers)
             for (int i = 0; i < total_nodes; i++) { 
-                // j = 1...N (customers)
-                for (int j = 1; j <= num_customers; j++) { 
+                // j = 1...N+1 (customers)
+                for (int j = 1; j < total_nodes; j++) { 
+
+                    if (i==j) continue;
                     // t_i^v + w_ij - (1-x_ij^v)T <= t_j^v
                     model.add(t_v[v][i] + w[i][j] - (1.0 - x[v][i][j]) * T <= t_v[v][j]);
                 }
@@ -528,6 +533,41 @@ int main() {
                 }
             }
         }
+
+
+        // --- Constraint: Seal start depot, outflow only ---
+        for (int v = 0; v < num_vehicles; v++) {
+            IloExpr flow_into_start(env);
+            
+            // Sum all arcs x[v][i][0] where i is any node excetp 0
+            for (int i = 1; i < total_nodes; i++) { 
+
+                flow_into_start += x[v][i][depot_start];
+            }
+
+            // Force the total flow into the start depot to be 0
+            model.add(flow_into_start == 0);
+            flow_into_start.end();
+        }
+
+        // --- Constraint: Seal end depot, inflow only ---
+
+        for (int v = 0; v < num_vehicles; v++) {
+
+            IloExpr flow_out_of_end(env);
+            
+            // Sum all arcs x[v][6][j] where j is any node excetp 0
+            for (int j = 0; j < total_nodes; j++) {
+                // Skip j == depot_end
+                if (j == depot_end) continue; 
+                
+                flow_out_of_end += x[v][depot_end][j];
+            }
+
+            // Force the total flow out of the end depot to be 0
+            model.add(flow_out_of_end == 0);
+            flow_out_of_end.end();
+        }        
         
         cout << "All constraints added." << endl;
 
