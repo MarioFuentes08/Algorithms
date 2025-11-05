@@ -55,6 +55,9 @@ int main() {
         // Q: Vehicle's capacity
         IloNum Q = 100.0; 
 
+        // Q_d: Drone's capacity
+        IloNum Q_d = 20.0;
+
         // E: Drone flight endurance
         IloNum E = 50.0; 
 
@@ -204,6 +207,48 @@ int main() {
         // =======================================================================
         cout << "Adding constraints..." << endl;
 
+        // --- Missing constrain: Serve Each Customer Exactly Once ---
+        /*
+        Each customer must be served either by a drone or by a truck
+        */
+        // For each customer j (1...N)
+        for (int j = 1; j <= num_customers; j++) {
+            IloExpr expr_serve(env);
+
+            // Term 1: Served by a vehicle
+            // Sum over v, i
+            for (int v = 0; v < num_vehicles; v++) {
+                for (int i = 0; i < total_nodes; i++) {
+                    if (i == j) continue; // Skip x[j][j]
+                    expr_serve += x[v][i][j];
+                }
+            }
+
+            // Term 2: Served by a drone
+            // Sum over v, d, i, k
+            for (int v = 0; v < num_vehicles; v++) {
+                for (int d = 0; d < num_drones; d++) {
+                    for (int i = 0; i < total_nodes; i++) {
+                        //avoid launch and serve at the same node j
+                        if (i == j) continue; 
+                        
+                        for (int k = 0; k < total_nodes; k++) {
+                            //avoid serve and meet at the same node j
+                            if (k == j) continue; 
+                            //avoid serve and meet at the same node i
+                            if (k == i) continue;
+                            
+                            expr_serve += y[v][d][i][j][k];
+                        }
+                    }
+                }
+            }
+            
+            // Force the model to serve the customer
+            model.add(expr_serve == 1);
+            expr_serve.end();
+        }
+
         // --- Constraints (1) & (2): Depot Start/End ---
         // Constraints (1) and (2) ensure that each route
         // should begin and end at the depot (node “0”) at most
@@ -225,6 +270,16 @@ int main() {
             model.add(expr2 <= 1); // Add constraint (2)
             expr1.end();
             expr2.end();
+        }
+
+        //--- Prohibit start depot to end depot and vice versa ---
+
+        for(int v = 0; v < num_vehicles; v++){
+            model.add(x[v][depot_start][depot_end] == 0);
+        }
+
+        for(int v = 0; v < num_vehicles; v++){
+            model.add(x[v][depot_end][depot_start] == 0);
         }
 
         // --- Constraint (3): Drone leaves customer i at most once ---
@@ -278,7 +333,7 @@ int main() {
             // Sum i=1...N (customers)
             for (int i = 1; i <= num_customers; i++) { 
                 // Sum j=0...N (depot 0 + customers), j != i
-                for (int j = 0; j <= num_customers; j++) { 
+                for (int j = 0; j < total_nodes; j++) { 
                     if (i == j) continue;
                     expr5 += q[i] * x[v][i][j];
                 }
@@ -290,17 +345,42 @@ int main() {
                 // Sum j=1...N (customers)
                 for (int j = 1; j <= num_customers; j++) { 
                     // Sum i=0...N (depot 0 + customers), i != j
-                    for (int i = 0; i <= num_customers; i++) { 
+                    for (int i = 0; i < total_nodes; i++) { 
                         if (i == j) continue;
                         // Sum k=0...N (depot 0 + customers)
-                        for (int k = 0; k <= num_customers; k++) { 
-                            expr5 += q[i] * y[v][d][i][j][k];
+                        for (int k = 0; k < total_nodes; k++) { 
+                            expr5 += q[j] * y[v][d][i][j][k];
                         }
                     }
                 }
             }
             model.add(expr5 <= Q); // Add constraint (5)
             expr5.end();
+        }
+
+        // --- Constraint (5_2): Drone Capacity ---
+        // For each drone d
+        //state that the total load of each drone must not exceed its capacity
+        for (int v = 0; v < num_vehicles; v++) {
+            for (int d = 0; d < num_drones; d++) {
+                for (int i = 0; i < total_nodes; i++) {
+                    for (int j = 1; j <= num_customers; j++) { // j is a customer
+                        
+                        // Drone can not be launched from the node which is served
+                        if (i == j) continue;
+
+                        for (int k = 0; k < total_nodes; k++) {
+                            // Drone can not meet v in the same node j 
+                            if (k == j) continue;
+                            
+                            // Drone can not meet v in the same node i 
+                            if (k == i) continue;
+
+                            model.add(q[j] * y[v][d][i][j][k] <= Q_d);
+                        }
+                    }
+                }
+            }
         }
 
         // --- Constraint (6): Drone Endurance ---
@@ -334,35 +414,37 @@ int main() {
 
         for (int v = 0; v < num_vehicles; v++) {
             for (int d = 0; d < num_drones; d++) {
+
                 // i, k = 0...N (depot 0 + customers)
                 for (int i = 0; i < total_nodes; i++) { 
-                    for (int k = 0; k < total_nodes; k++) {
-                        // j = 1...N (customers)
-                        for (int j = 1; j <= num_customers; j++) { 
-                            // Left: sum(x_il^v) + sum(x_mk^v)
-                            IloExpr expr7_Left(env);
-                            // Sum l=1...N (customers)
-                            for (int l = 1; l <= num_customers; l++) {
-                                expr7_Left += x[v][i][l];
-                            }
-                            // Sum m=0...N (depot 0 + customers)
-                            for (int m = 0; m < total_nodes; m++) {
-                                expr7_Left += x[v][m][k];
-                            }
-                            
-                            // Right: 2 * y_ijk^vd
-                            IloExpr expr7_Right(env);
-                            expr7_Right = 2.0 * y[v][d][i][j][k];
 
-                            model.add(expr7_Left <= expr7_Right); // Add constraint (7)
-                            expr7_Left.end();
-                            expr7_Right.end();
+                    // j = 1...N (customers)
+                    for (int j = 1; j <= num_customers; j++){
+                        //Drone can not be launched from node i and serve the same node j
+                        if (i==j) continue;
+
+                        //Iterate over all k meeting nodes
+                        for (int k = 0; k < total_nodes; k++) {
+                            //Can not meet on the served node
+                            //Can not be launched and met in the same node
+                            if (k == j || k == i)  continue;
+                            
+                            if(v == d){        
+                                /*
+                                Vehicle v only can use Drone d
+                                V0 uses D0, V1 uses D1
+                                */
+                                model.add(y[v][d][i][j][k] <= x[v][i][k]);
+                            }
+                            else{
+                                //This mission is not possible
+                                model.add(y[v][d][i][j][k] == 0);
+                            }
                         }
                     }
                 }
             }
         }
-
 
         // --- Constraints (8) & (9): Time Initialization ---
         /*
@@ -394,6 +476,34 @@ int main() {
                 }
             }
         }
+
+
+        for (int v = 0; v < num_vehicles; v++) {
+            // h is a client from 1 to N
+            // Depots 0 and N+1 does not need  to conserve flow 
+            for (int h = 1; h <= num_customers; h++) {
+                
+                IloExpr flow_in(env);  
+                IloExpr flow_out(env); 
+
+                //Input
+                for (int i = 0; i < total_nodes; i++) {
+                    if (i == h) continue; // avoid i = h
+                    flow_in += x[v][i][h];
+                }
+
+                //Output
+                for (int j = 0; j < total_nodes; j++) {
+                    if (j == h) continue; // avoid j = h
+                    flow_out += x[v][h][j];
+                }
+
+                // Input flow must be equal to output flow
+                model.add(flow_in == flow_out);
+                flow_in.end();
+                flow_out.end();
+            }
+        }        
         
         // --- Constraint (11): Drone Arrival Time ---
         /*
@@ -411,8 +521,8 @@ int main() {
                         for (int k = 0; k < total_nodes; k++) {
                             if (k == i || k == j) continue;
                             
-                            // t_i^v + w_ij * y_ijk^vd <= t_j^d
-                            model.add(t_v[v][i] + w[i][j] * y[v][d][i][j][k] <= t_d[d][j]);
+                            // t_i^v + W_ij  - (1 - y_ijk^vd)T <= t_j^d
+                            model.add(t_v[v][i] + W[i][j] - (1- y[v][d][i][j][k])* T <= t_d[d][j]);
                         }
                     }
                 }
@@ -515,5 +625,5 @@ int main() {
     // This frees all memory allocated by Ceplex
     env.end();
 
-    return 0; // End of main
+    return 0; 
 }
