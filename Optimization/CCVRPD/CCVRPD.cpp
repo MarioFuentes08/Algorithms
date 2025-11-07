@@ -10,6 +10,7 @@
 // Main header file for CPLEX 
 #include <ilcplex/ilocplex.h>
 #include <fstream>
+#include <cmath>
 
 using namespace std;
 
@@ -20,7 +21,7 @@ int main() {
 
     try {
         // =======================================================================
-        // 1. DEFINE PROBLEM DATA (HARDCODING VALUES FOR TESTING)
+        // 1. DEFINE PROBLEM DATA (USING 2D COORDINATES)
         // =======================================================================
         
         // N' in the paper's text.
@@ -62,6 +63,9 @@ int main() {
         // E: Drone flight endurance
         IloNum E = 50.0; 
 
+        double vehicle_speed = 35.0; // e.g., 35 mph
+        double drone_speed = 50.0;   // e.g., 50 mph
+
         // w_ij: Traveling time by vehicle (matrix)
         typedef IloArray<IloNumArray> NumMatrix;
         NumMatrix w(env, total_nodes);
@@ -72,38 +76,67 @@ int main() {
         // q_i: Demand of customer i (array)
         IloNumArray q(env, total_nodes);
 
-        // --- Harcoding values ---
-        // This data is arbitrary, just for making the model runnable.
-        cout << "Populating data..." << endl;
+        IloNumArray coord_x(env, total_nodes);
+        IloNumArray coord_y(env, total_nodes);
+
+        // --- Coordinates  ---
+        cout << "Populating data from coordinates..." << endl;
+
+        // Initialize the 2D time matrices
         for (int i = 0; i < total_nodes; i++) {
-            // Initialize arrays for matrices
             w[i] = IloNumArray(env, total_nodes);
             W[i] = IloNumArray(env, total_nodes);
+        }
+        
+        // --- Node Definitions (Hardcoded coordinates and demands) ---
+        // Arbitrary coordinates for testing
+        
+        // Node 0 (Start Depot)
+        coord_x[0] = 50.0; coord_y[0] = 50.0; q[0] = 0.0;
 
-            // Set demand: 0 for depots, 10-15 for customers
-            if (i == depot_start || i == depot_end) {
-                q[i] = 0.0;
-            } else {
-                q[i] = 10.0 + (i % 5); // e.g., 10, 11, 12, 13, 14
-            }
+        // Node 1 (Customer 1)
+        coord_x[1] = 20.0; coord_y[1] = 80.0; q[1] = 11.0;
 
-            // Populate travel time matrices
+        // Node 2 (Customer 2)
+        coord_x[2] = 80.0; coord_y[2] = 80.0; q[2] = 12.0;
+
+        // Node 3 (Customer 3)
+        coord_x[3] = 10.0; coord_y[3] = 40.0; q[3] = 13.0;
+        
+        // Node 4 (Customer 4)
+        coord_x[4] = 90.0; coord_y[4] = 40.0; q[4] = 14.0;
+        
+        // Node 5 (Customer 5)
+        coord_x[5] = 50.0; coord_y[5] = 20.0; q[5] = 10.0;
+
+        // Node 6 (End Depot)
+        // the same physical location as the start depot (node 0)
+        coord_x[6] = 50.0; coord_y[6] = 50.0; q[6] = 0.0;
+
+
+        // --- Calculate Time Matrices from Coordinates ---
+
+        for (int i = 0; i < total_nodes; i++) {
             for (int j = 0; j < total_nodes; j++) {
                 if (i == j) {
-                    w[i][j] = 0.0;  // Time to itself is 0
-                    W[i][j] = 0.0;  // Time to itself is 0
+                    // Time to the same node is 0
+                    w[i][j] = 0.0; 
+                    W[i][j] = 0.0; 
                 } else {
-                    // Vehicle time (Euclidean distance)
-                    // It is the traveling time between nodes i and j by the vehicle v
-                    w[i][j] = (abs(i - j) + 1) * 2.0; 
+                    //  Calculate Euclidean Distance
+                    // dist = sqrt( (x_i - x_j)^2 + (y_i - y_j)^2 )
+                    double delta_x = coord_x[i] - coord_x[j];
+                    double delta_y = coord_y[i] - coord_y[j];
+                    double distance = std::sqrt(std::pow(delta_x, 2) + std::pow(delta_y, 2));
 
-                    // The drone moves at a higher speed than that of vehicles
-                    // Drone time (e.g., 0.5x vehicle time)
-                    // It is the traveling time between nodes i and j by the drone d
-                    W[i][j] = (abs(i - j) + 1) * 1.0; 
+                    // Calculate Time = Distance / Speed
+                    // The model will now optimize based on these calculated times.
+                    w[i][j] = distance / vehicle_speed;
+                    W[i][j] = distance / drone_speed;
                 }
             }
         }
+
         cout << "Data population completed" << endl;
 
 
