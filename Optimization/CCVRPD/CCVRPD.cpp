@@ -11,6 +11,10 @@
 #include <ilcplex/ilocplex.h>
 #include <fstream>
 #include <cmath>
+#include <sstream>   
+#include <map>       
+#include <vector>    
+
 
 using namespace std;
 
@@ -21,98 +25,150 @@ int main() {
 
     try {
         // =======================================================================
-        // 1. DEFINE PROBLEM DATA (USING 2D COORDINATES)
+        // 1. DEFINE PROBLEM DATA (Reading from .vrp FILE)
         // =======================================================================
         
-        // N' in the paper's text.
-        int num_customers = 5; 
+        cout << "Parsing .vrp file..." << endl;
         
-        /*
-        There is a fleet of identical vehicles V available to serve
-        the customers such that each of them is equipped with
-        a drone
-        */
-        // V in the paper's text.
-        int num_vehicles = 2;
-        
-        // D in the paper's text.
-        int num_drones = 2; 
+        std::string vrp_filename = "./Instances/P-n13-k8.vrp"; // .vrp file
+        std::string line;
+        std::string current_section;
+
+        string instance_name = "";
+        int file_dimension = 0;
+        int file_capacity = 0;
+        int file_depot_id = 0;
+        int file_num_vehicles = 0; 
+
+        std::map<int, std::pair<double, double>> temp_coords;
+        std::map<int, double> temp_demand;
+
+        // Read .vrp file
+
+        std::ifstream file(vrp_filename);
+        while (std::getline(file, line)) {
+
+            std::stringstream ss(line);
+            std::string keyword;
+
+            ss >> keyword;
+
+            if (keyword == "NAME") {
+                ss.ignore(20, ':'); // Ignore " : "
+                ss >> instance_name;
+            }
+            else if (keyword == "COMMENT") {
+                // Number of trucks
+                std::string temp;
+                while (ss >> temp) {
+                    if (temp == "trucks:") {
+                        ss >> file_num_vehicles;
+                        break;
+                    }
+                }
+            }
+            else if (keyword == "DIMENSION") {
+                ss.ignore(20, ':'); // Ignore " : "
+                ss >> file_dimension;
+            }
+            else if (keyword == "CAPACITY") {
+                ss.ignore(20, ':'); // Ignore " : "
+                ss >> file_capacity;
+            }
+            else if (keyword == "NODE_COORD_SECTION") {
+                current_section = "COORDS";
+            }
+            else if (keyword == "DEMAND_SECTION") {
+                current_section = "DEMAND";
+            }
+            else if (keyword == "DEPOT_SECTION") {
+                current_section = "DEPOT";
+            }
+            else if (keyword == "EOF") {
+                break; // Fin del archivo
+            }
+            //Process Data
+            else if (current_section == "COORDS") {
+                int id;
+                double x, y;
+                // 'keyword' with ID
+                std::stringstream(keyword) >> id; 
+                ss >> x >> y;
+                temp_coords[id] = {x, y};
+            }
+            else if (current_section == "DEMAND") {
+                int id;
+                double demand;
+                std::stringstream(keyword) >> id;
+                ss >> demand;
+                temp_demand[id] = demand;
+            }
+            else if (current_section == "DEPOT") {
+                std::stringstream(keyword) >> file_depot_id;
+                if (file_depot_id != -1) {
+                    current_section = ""; 
+                }
+            }
+        }
+        file.close();
+
+        // --- Map Data ---
 
 
-        // The set N = {0, 1, ..., N+1}
-        // Set total_nodes as (N+2) to account for 0, (1...N), and (N+1)
-        int total_nodes = num_customers + 2; // Total nodes = 7
-        
-        // Index for the start depot (Node "0")
-        int depot_start = 0; 
-        
-        // Index for the end depot (Node "N+1")
-        int depot_end = num_customers + 1; // 
+        int num_customers = file_dimension - 1; //subtract the depot
+        int total_nodes = num_customers + 2; // (N+2)
+        int depot_start = 0;
+        int depot_end = num_customers + 1; // (N+1)
 
-        // --- Parameters ---
-        
-        // T: A large positive constant (for big-M constraints)
-        IloNum T = 10000.0; 
+        // Assign parameters
 
-        // Q: Vehicle's capacity
-        IloNum Q = 100.0; 
+        int num_vehicles = file_num_vehicles;
+        int num_drones = num_vehicles;                 // 1 dron per vehicle
+        IloNum T = 10000.0;
+        IloNum Q = file_capacity;                    // Read from vrp file
+        IloNum Q_d = (uint16_t)(file_capacity/2);   // Drone capacity is considered as half that of the vehicle. No available in the vrp file
+        IloNum E = 80.0;                            // Harcoded. No available in the vrp file
+        double vehicle_speed = 35.0;                // Harcoded. No available in the vrp file
+        double drone_speed = 50.0;                  // Harcoded. No available in the vrp file     
 
-        // Q_d: Drone's capacity
-        IloNum Q_d = 20.0;
 
-        // E: Drone flight endurance
-        IloNum E = 50.0; 
-
-        double vehicle_speed = 35.0; // e.g., 35 mph
-        double drone_speed = 50.0;   // e.g., 50 mph
-
-        // w_ij: Traveling time by vehicle (matrix)
+        // CPLEX structures
         typedef IloArray<IloNumArray> NumMatrix;
         NumMatrix w(env, total_nodes);
-        
-        // W_ij: Traveling time by drone (matrix)
         NumMatrix W(env, total_nodes); 
-        
-        // q_i: Demand of customer i (array)
         IloNumArray q(env, total_nodes);
-
         IloNumArray coord_x(env, total_nodes);
         IloNumArray coord_y(env, total_nodes);
 
-        // --- Coordinates  ---
-        cout << "Populating data from coordinates..." << endl;
-
-        // Initialize the 2D time matrices
         for (int i = 0; i < total_nodes; i++) {
             w[i] = IloNumArray(env, total_nodes);
             W[i] = IloNumArray(env, total_nodes);
         }
-        
-        // --- Node Definitions (Hardcoded coordinates and demands) ---
-        // Arbitrary coordinates for testing
-        
-        // Node 0 (Start Depot)
-        coord_x[0] = 50.0; coord_y[0] = 50.0; q[0] = 0.0;
 
-        // Node 1 (Customer 1)
-        coord_x[1] = 20.0; coord_y[1] = 80.0; q[1] = 11.0;
+        //Mapping vrp data
 
-        // Node 2 (Customer 2)
-        coord_x[2] = 80.0; coord_y[2] = 80.0; q[2] = 12.0;
+        cout << "Mapping .vrp data to model structure..." << endl;
 
-        // Node 3 (Customer 3)
-        coord_x[3] = 10.0; coord_y[3] = 40.0; q[3] = 13.0;
-        
-        // Node 4 (Customer 4)
-        coord_x[4] = 90.0; coord_y[4] = 40.0; q[4] = 14.0;
-        
-        // Node 5 (Customer 5)
-        coord_x[5] = 50.0; coord_y[5] = 20.0; q[5] = 10.0;
+        // map depot (Node 'file_depot_id' of .vrp) to node 0 and N+1
+        coord_x[depot_start] = temp_coords[file_depot_id].first;
+        coord_y[depot_start] = temp_coords[file_depot_id].second;
+        q[depot_start] = 0.0;
 
-        // Node 6 (End Depot)
-        // the same physical location as the start depot (node 0)
-        coord_x[6] = 50.0; coord_y[6] = 50.0; q[6] = 0.0;
+        coord_x[depot_end] = temp_coords[file_depot_id].first;
+        coord_y[depot_end] = temp_coords[file_depot_id].second;
+        q[depot_end] = 0.0;
 
+        // Map costumers to the other nodes 
+        int model_node_index = 1; // customer 1
+        for (int vrp_node_id = 1; vrp_node_id <= file_dimension; vrp_node_id++) {
+            // if the vrp node is not the depot, is a customer
+            if (vrp_node_id != file_depot_id) {
+                coord_x[model_node_index] = temp_coords[vrp_node_id].first;
+                coord_y[model_node_index] = temp_coords[vrp_node_id].second;
+                q[model_node_index] = temp_demand[vrp_node_id];
+                model_node_index++;
+            }
+        }
 
         // --- Calculate Time Matrices from Coordinates ---
 
@@ -137,8 +193,27 @@ int main() {
             }
         }
 
-        cout << "Data population completed" << endl;
+        cout << "Data population completed. (N=" << num_customers << ", V=" << num_vehicles << ") " << "Instance: " << instance_name << endl;
 
+        //This data will be used for plotting in python
+        cout << "Exporting node data to node_data.csv..." << endl;
+
+        // Open the output file
+        std::ofstream node_file;
+        node_file.open("node_data.csv");
+
+        // write the CSV header
+        node_file << "node_id,x_coord,y_coord,demand\n";
+        
+        // Write data for each node (0 to N+1)
+        for (int i = 0; i < total_nodes; i++) {
+            node_file << i << "," 
+                      << coord_x[i] << "," 
+                      << coord_y[i] << "," 
+                      << q[i] << "\n";
+        }
+        
+        node_file.close();
 
         // =======================================================================
         // 2. CREATE THE MILP MODEL
@@ -624,6 +699,13 @@ int main() {
             cout << "Objective value: " << cplex.getObjValue() << endl;
             cout << "----------------------------------------" << endl;
 
+            double optimal_value = cplex.getObjValue();
+            std::ofstream summary_file;
+            summary_file.open("solution_summary.csv");
+            summary_file << "objective_value\n"; 
+            summary_file << optimal_value << "\n";      
+            summary_file.close();
+            
             // --- Output files ---
             std::ofstream vehicle_file;
             std::ofstream drone_file;
@@ -701,7 +783,7 @@ int main() {
             // Close csv files
             vehicle_file.close();
             drone_file.close();
-            cout << "\nSolution exported to vehicle_routes.csv and drone_missions.csv" << endl;            //
+            cout << "\nSolution exported to vehicle_routes.csv and drone_missions.csv" << endl;    
 
         } else {
             // If no solution is found
