@@ -9,6 +9,7 @@
 
 // Main header file for CPLEX 
 #include <ilcplex/ilocplex.h>
+#include <fstream>
 
 using namespace std;
 
@@ -590,8 +591,19 @@ int main() {
             cout << "Objective value: " << cplex.getObjValue() << endl;
             cout << "----------------------------------------" << endl;
 
+            // --- Output files ---
+            std::ofstream vehicle_file;
+            std::ofstream drone_file;
+
+            // Create files to save the routes
+            vehicle_file.open("vehicle_routes.csv");
+            drone_file.open("drone_missions.csv");
+
+            // Headers
+            vehicle_file << "vehicle_id,from_node,to_node,arrival_at_to_node\n";
+            drone_file << "vehicle_id,drone_id,from_node,served_node,to_node,arrival_at_served_node\n";
+
             // --- Print the solution (non-zero variables) ---
-            
             double tolerance = 0.001; // To avoid printing tiny floating point values
 
             cout << "Vehicle Routes (x_ij^v):" << endl;
@@ -601,11 +613,15 @@ int main() {
                         try {
                             if (cplex.getValue(x[v][i][j]) > tolerance) {
                                 cout << "  Vehicle " << v << ": " << i << " -> " << j;
+                                double arrival_time = -1.0; // default value for end depot, there is no reported time for this depot
                                 // Only print time if j is NOT the end depot
                                 if (j != depot_end) {
-                                    cout << " (Arrival at " << j << ": " << cplex.getValue(t_v[v][j]) << ")";
+                                    arrival_time = cplex.getValue(t_v[v][j]);
+                                    cout << " (Arrival at " << j << ": " << arrival_time << ")";
                                 }
                                 cout << endl;
+
+                                vehicle_file << v << "," << i << "," << j << "," << arrival_time << "\n";
                             }
                         } catch (IloException& e) {
                             // Catch error if variable was eliminated by presolve
@@ -629,10 +645,14 @@ int main() {
                                             // Do nothing
                                         } else {
                                             // Valid mission
+                                            double arrival_time = cplex.getValue(t_d[d][j]);
+
                                             cout << "  V" << v << ", D" << d << ": " 
                                                  << i << " -> " << j << " -> " << k
-                                                 << " (Arrival at " << j << ": " << cplex.getValue(t_d[d][j]) << ")"
+                                                 << " (Arrival at " << j << ": " << arrival_time << ")"
                                                  << endl;
+
+                                            drone_file << v << "," << d << "," << i << "," << j << "," << k << "," << arrival_time << "\n";
                                         }
                                     }
                                 } catch (IloException& e) {
@@ -644,6 +664,11 @@ int main() {
                     }
                 }
             }
+
+            // Close csv files
+            vehicle_file.close();
+            drone_file.close();
+            cout << "\nSolution exported to vehicle_routes.csv and drone_missions.csv" << endl;            //
 
         } else {
             // If no solution is found
