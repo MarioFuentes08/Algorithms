@@ -14,12 +14,22 @@
 #include <sstream>   
 #include <map>       
 #include <vector>    
-
+#include <stdexcept>
 
 using namespace std;
 
-int main() {
+int main(int argc, char* argv[]) {
 
+    //Verify argument
+    if (argc < 2) {
+        
+        cerr << "Error: VRP file name is not indicated." << endl;
+        cerr << "Eg: .\\CCVRPD.exe ./Instances/P-n16-k8.vrp" << endl;
+        return 1; // Retorna 1 para indicar un error
+    }
+
+    std::string vrp_filename = argv[1]; // .vrp file
+    
     // Initialize the CPLEX environment
     IloEnv env;
 
@@ -30,7 +40,6 @@ int main() {
         
         cout << "Parsing .vrp file..." << endl;
         
-        std::string vrp_filename = "./Instances/P-n13-k8.vrp"; // .vrp file
         std::string line;
         std::string current_section;
 
@@ -488,7 +497,7 @@ int main() {
                             // Drone can not meet v in the same node i 
                             if (k == i) continue;
 
-                            model.add(q[j] * y[v][d][i][j][k] <= Q_d);
+                            model.add((q[j] * y[v][d][i][j][k]) <= Q_d);
                         }
                     }
                 }
@@ -523,41 +532,48 @@ int main() {
         // the relationship between the decision variables which
         // state that if a drone starts from a customer i and goes to
         // customer k, they must be visited by a vehicle.
+        //It is not allowed for new launches to occur before recovering the previous drone in the same route
 
         for (int v = 0; v < num_vehicles; v++) {
-            for (int d = 0; d < num_drones; d++) {
+            
+            // i, k = 0...N (depot 0 + customers)
+            for (int i = 0; i < total_nodes; i++) { 
+                for (int k = 0; k < total_nodes; k++) {
 
-                // i, k = 0...N (depot 0 + customers)
-                for (int i = 0; i < total_nodes; i++) { 
+                    if (i == k) continue;
+
+                    int d_assigned = v;
+
+
+                    IloExpr drone_mission_sum(env);
 
                     // j = 1...N (customers)
                     for (int j = 1; j <= num_customers; j++){
                         //Drone can not be launched from node i and serve the same node j
-                        if (i==j) continue;
+                        if (j == i || j == k) continue;
 
-                        //Iterate over all k meeting nodes
-                        for (int k = 0; k < total_nodes; k++) {
-                            //Can not meet on the served node
-                            //Can not be launched and met in the same node
-                            if (k == j || k == i)  continue;
-                            
-                            if(v == d){        
-                                /*
-                                Vehicle v only can use Drone d
-                                V0 uses D0, V1 uses D1
-                                */
-                                model.add(y[v][d][i][j][k] <= x[v][i][k]);
-                            }
-                            else{
-                                //This mission is not possible
-                                model.add(y[v][d][i][j][k] == 0);
-                            }
+                        drone_mission_sum += y[v][d_assigned][i][j][k];
+                    }
+
+                    model.add(drone_mission_sum <= x[v][i][k]);
+                    drone_mission_sum.end();
+
+                    //These drones can not be used by this vehicle
+                    for (int d_other = 0; d_other < num_drones; d_other++) {
+
+                        if (d_other == v) continue;
+
+                        for (int j = 1; j <= num_customers; j++) {
+                            if (j == i || j == k) continue;
+
+                            //Mission impossible, eg V0 using D1
+                            model.add(y[v][d_other][i][j][k] == 0);
                         }
                     }
                 }
             }
         }
-
+            
         // --- Constraints (8) & (9): Time Initialization ---
         /*
         Constraints (8) and (9) provide the initialization times
@@ -586,7 +602,7 @@ int main() {
 
                     if (i==j) continue;
                     // t_i^v + w_ij - (1-x_ij^v)T <= t_j^v
-                    model.add(t_v[v][i] + w[i][j] - (1.0 - x[v][i][j]) * T <= t_v[v][j]);
+                    model.add((t_v[v][i] + w[i][j] - (1.0 - x[v][i][j]) * T) <= t_v[v][j]);
                 }
             }
         }
@@ -636,7 +652,7 @@ int main() {
                             if (k == i || k == j) continue;
                             
                             // t_i^v + W_ij  - (1 - y_ijk^vd)T <= t_j^d
-                            model.add(t_v[v][i] + W[i][j] - (1- y[v][d][i][j][k])* T <= t_d[d][j]);
+                            model.add((t_v[v][i] + W[i][j] - (1- y[v][d][i][j][k])* T) <= t_d[d][j]);
                         }
                     }
                 }
@@ -677,8 +693,50 @@ int main() {
             model.add(flow_out_of_end == 0);
             flow_out_of_end.end();
         }        
+
+        // --- Constraint: Truck can not wait at the same location for the drone ---
+        for (int v = 0; v < num_vehicles; v++) {
+            for(int d = 0; d < num_drones; d++){
+
+                for(int i = 0; i <total_nodes; i++){
+
+                    for(int j = 1; j<=num_customers; j++){
+
+                        if(i == j) continue;
+
+                        for(int k = 0; k < total_nodes; k++){
+
+                            if((i == k)||(j == k)) continue;
+
+                            model.add(w[i][k] <= ( (W[i][j] + W[j][k]) + (1-y[v][d][i][j][k])*T ) );
+                        }
+
+                    }
+
+                }
+
+            }
+        }
+
+        // --- Constrain: It is not allowed for the drone to start the operation from the depot, 
+        //     serve the costumer, and then come back to the depot, otherwise operate independently ---
         
-        cout << "All constraints added." << endl;
+        for (int v = 0; v < num_vehicles; v++) {
+            for(int d = 0; d < num_drones; d++){
+
+                for(int j = 1; j<=num_customers; j++){
+
+                    model.add(y[v][d][depot_start][j][depot_start] == 0);
+                    model.add(y[v][d][depot_start][j][depot_end] == 0);
+
+                    model.add(y[v][d][depot_end][j][depot_start] == 0);
+                    model.add(y[v][d][depot_end][j][depot_end] == 0);
+
+                }
+
+            }
+
+        }
 
         // =======================================================================
         // 6. SOLVE THE MODEL
