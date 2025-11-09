@@ -325,48 +325,6 @@ int main(int argc, char* argv[]) {
         // =======================================================================
         cout << "Adding constraints..." << endl;
 
-        // --- Missing constrain: Serve Each Customer Exactly Once ---
-        /*
-        Each customer must be served either by a drone or by a truck
-        */
-        // For each customer j (1...N)
-        for (int j = 1; j <= num_customers; j++) {
-            IloExpr expr_serve(env);
-
-            // Term 1: Served by a vehicle
-            // Sum over v, i
-            for (int v = 0; v < num_vehicles; v++) {
-                for (int i = 0; i < total_nodes; i++) {
-                    if (i == j) continue; // Skip x[j][j]
-                    expr_serve += x[v][i][j];
-                }
-            }
-
-            // Term 2: Served by a drone
-            // Sum over v, d, i, k
-            for (int v = 0; v < num_vehicles; v++) {
-                for (int d = 0; d < num_drones; d++) {
-                    for (int i = 0; i < total_nodes; i++) {
-                        //avoid launch and serve at the same node j
-                        if (i == j) continue; 
-                        
-                        for (int k = 0; k < total_nodes; k++) {
-                            //avoid serve and meet at the same node j
-                            if (k == j) continue; 
-                            //avoid serve and meet at the same node i
-                            if (k == i) continue;
-                            
-                            expr_serve += y[v][d][i][j][k];
-                        }
-                    }
-                }
-            }
-            
-            // Force the model to serve the customer
-            model.add(expr_serve == 1);
-            expr_serve.end();
-        }
-
         // --- Constraints (1) & (2): Depot Start/End ---
         // Constraints (1) and (2) ensure that each route
         // should begin and end at the depot (node “0”) at most
@@ -391,16 +349,6 @@ int main(int argc, char* argv[]) {
 
             total_starts.end();
             total_ends.end();
-        }
-
-        //--- Prohibit start depot to end depot and vice versa ---
-
-        for(int v = 0; v < num_vehicles; v++){
-            model.add(x[v][depot_start][depot_end] == 0);
-        }
-
-        for(int v = 0; v < num_vehicles; v++){
-            model.add(x[v][depot_end][depot_start] == 0);
         }
 
         // --- Constraint (3): Drone leaves customer i at most once ---
@@ -477,31 +425,6 @@ int main(int argc, char* argv[]) {
             }
             model.add(expr5 <= Q); // Add constraint (5)
             expr5.end();
-        }
-
-        // --- Constraint (5_2): Drone Capacity ---
-        // For each drone d
-        //state that the total load of each drone must not exceed its capacity
-        for (int v = 0; v < num_vehicles; v++) {
-            for (int d = 0; d < num_drones; d++) {
-                for (int i = 0; i < total_nodes; i++) {
-                    for (int j = 1; j <= num_customers; j++) { // j is a customer
-                        
-                        // Drone can not be launched from the node which is served
-                        if (i == j) continue;
-
-                        for (int k = 0; k < total_nodes; k++) {
-                            // Drone can not meet v in the same node j 
-                            if (k == j) continue;
-                            
-                            // Drone can not meet v in the same node i 
-                            if (k == i) continue;
-
-                            model.add((q[j] * y[v][d][i][j][k]) <= Q_d);
-                        }
-                    }
-                }
-            }
         }
 
         // --- Constraint (6): Drone Endurance ---
@@ -606,34 +529,6 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
-
-
-        for (int v = 0; v < num_vehicles; v++) {
-            // h is a client from 1 to N
-            // Depots 0 and N+1 does not need  to conserve flow 
-            for (int h = 1; h <= num_customers; h++) {
-                
-                IloExpr flow_in(env);  
-                IloExpr flow_out(env); 
-
-                //Input
-                for (int i = 0; i < total_nodes; i++) {
-                    if (i == h) continue; // avoid i = h
-                    flow_in += x[v][i][h];
-                }
-
-                //Output
-                for (int j = 0; j < total_nodes; j++) {
-                    if (j == h) continue; // avoid j = h
-                    flow_out += x[v][h][j];
-                }
-
-                // Input flow must be equal to output flow
-                model.add(flow_in == flow_out);
-                flow_in.end();
-                flow_out.end();
-            }
-        }        
         
         // --- Constraint (11): Drone Arrival Time ---
         /*
@@ -660,39 +555,103 @@ int main(int argc, char* argv[]) {
         }
 
 
-        // --- Constraint: Seal start depot, outflow only ---
-        for (int v = 0; v < num_vehicles; v++) {
-            IloExpr flow_into_start(env);
-            
-            // Sum all arcs x[v][i][0] where i is any node excetp 0
-            for (int i = 1; i < total_nodes; i++) { 
+ 
 
-                flow_into_start += x[v][i][depot_start];
+        // --- Constrain: Serve Each Customer Exactly Once ---
+        /*
+        Each customer must be served either by a drone or by a truck
+        */
+        // For each customer j (1...N)
+        for (int j = 1; j <= num_customers; j++) {
+            IloExpr expr_serve(env);
+
+            // Term 1: Served by a vehicle
+            // Sum over v, i
+            for (int v = 0; v < num_vehicles; v++) {
+                for (int i = 0; i < total_nodes; i++) {
+                    if (i == j) continue; // Skip x[j][j]
+                    expr_serve += x[v][i][j];
+                }
             }
 
-            // Force the total flow into the start depot to be 0
-            model.add(flow_into_start == 0);
-            flow_into_start.end();
+            // Term 2: Served by a drone
+            // Sum over v, d, i, k
+            for (int v = 0; v < num_vehicles; v++) {
+                for (int d = 0; d < num_drones; d++) {
+                    for (int i = 0; i < total_nodes; i++) {
+                        //avoid launch and serve at the same node j
+                        if (i == j) continue; 
+                        
+                        for (int k = 0; k < total_nodes; k++) {
+                            //avoid serve and meet at the same node j
+                            if (k == j) continue; 
+                            //avoid serve and meet at the same node i
+                            if (k == i) continue;
+                            
+                            expr_serve += y[v][d][i][j][k];
+                        }
+                    }
+                }
+            }
+            
+            // Force the model to serve the customer
+            model.add(expr_serve == 1);
+            expr_serve.end();
         }
 
-        // --- Constraint: Seal end depot, inflow only ---
+       // --- Constrain:  Drone Capacity ---
+        // For each drone d
+        //state that the total load of each drone must not exceed its capacity
+        for (int v = 0; v < num_vehicles; v++) {
+            for (int d = 0; d < num_drones; d++) {
+                for (int i = 0; i < total_nodes; i++) {
+                    for (int j = 1; j <= num_customers; j++) { // j is a customer
+                        
+                        // Drone can not be launched from the node which is served
+                        if (i == j) continue;
+
+                        for (int k = 0; k < total_nodes; k++) {
+                            // Drone can not meet v in the same node j 
+                            if (k == j) continue;
+                            
+                            // Drone can not meet v in the same node i 
+                            if (k == i) continue;
+
+                            model.add((q[j] * y[v][d][i][j][k]) <= Q_d);
+                        }
+                    }
+                }
+            }
+        }
+
+        //--- Constraint: Flow conservation ---
 
         for (int v = 0; v < num_vehicles; v++) {
-
-            IloExpr flow_out_of_end(env);
-            
-            // Sum all arcs x[v][6][j] where j is any node excetp 0
-            for (int j = 0; j < total_nodes; j++) {
-                // Skip j == depot_end
-                if (j == depot_end) continue; 
+            // h is a client from 1 to N
+            // Depots 0 and N+1 does not need  to conserve flow 
+            for (int h = 1; h <= num_customers; h++) {
                 
-                flow_out_of_end += x[v][depot_end][j];
-            }
+                IloExpr flow_in(env);  
+                IloExpr flow_out(env); 
 
-            // Force the total flow out of the end depot to be 0
-            model.add(flow_out_of_end == 0);
-            flow_out_of_end.end();
-        }        
+                //Input
+                for (int i = 0; i < total_nodes; i++) {
+                    if (i == h) continue; // avoid i = h
+                    flow_in += x[v][i][h];
+                }
+
+                //Output
+                for (int j = 0; j < total_nodes; j++) {
+                    if (j == h) continue; // avoid j = h
+                    flow_out += x[v][h][j];
+                }
+
+                // Input flow must be equal to output flow
+                model.add(flow_in == flow_out);
+                flow_in.end();
+                flow_out.end();
+            }
+        }  
 
         // --- Constraint: Truck can not wait at the same location for the drone ---
         for (int v = 0; v < num_vehicles; v++) {
@@ -737,6 +696,50 @@ int main(int argc, char* argv[]) {
             }
 
         }
+
+        //--- Constraint: Prohibit to start depot to end depot and vice versa ---
+
+        for(int v = 0; v < num_vehicles; v++){
+            model.add(x[v][depot_start][depot_end] == 0);
+        }
+
+        for(int v = 0; v < num_vehicles; v++){
+            model.add(x[v][depot_end][depot_start] == 0);
+        }
+
+        // --- Constraint: Seal start depot, outflow only ---
+        for (int v = 0; v < num_vehicles; v++) {
+            IloExpr flow_into_start(env);
+            
+            // Sum all arcs x[v][i][0] where i is any node excetp 0
+            for (int i = 1; i < total_nodes; i++) { 
+
+                flow_into_start += x[v][i][depot_start];
+            }
+
+            // Force the total flow into the start depot to be 0
+            model.add(flow_into_start == 0);
+            flow_into_start.end();
+        }
+
+
+        // --- Constraint: Seal end depot, inflow only ---
+        for (int v = 0; v < num_vehicles; v++) {
+
+            IloExpr flow_out_of_end(env);
+            
+            // Sum all arcs x[v][depot_end][j] where j is any node except 0
+            for (int j = 0; j < total_nodes; j++) {
+                // Skip j == depot_end
+                if (j == depot_end) continue; 
+                
+                flow_out_of_end += x[v][depot_end][j];
+            }
+
+            // Force the total flow out of the end depot to be 0
+            model.add(flow_out_of_end == 0);
+            flow_out_of_end.end();
+        }       
 
         // =======================================================================
         // 6. SOLVE THE MODEL
