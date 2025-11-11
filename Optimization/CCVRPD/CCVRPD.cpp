@@ -1,6 +1,6 @@
 /*
  * ===============================================================================
- * MILP Model for CCVRDP (Imen Hamdi, 18 Jan 2024)
+ * MILP Model for CCVRDP (Imen Hamdi, 18 Jan 2024) with additional gap fixes
  * This C++ implementation uses the CPLEX 22.1.1 to solve the mathematical, based 
  * on the paper "Solving the cumulative capacitated vehicle routing problem with drones"
  * by Imen Hamdi.
